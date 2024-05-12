@@ -1,0 +1,215 @@
+---
+title: "college analysis"
+author: "Yi Shen"
+date: '2024-03-11'
+output: html_document
+---
+
+```{r warning=FALSE,message=FALSE}
+library(dplyr)
+library(cluster)
+library(ggplot2)
+library(ISLR)
+library(pheatmap)
+library(corrplot)
+library(visdat)
+library(Rtsne)
+library(cowplot)
+library(umap)
+```
+
+```{r}
+college_row <- College
+dim(college_row)
+str(college_row)
+head(college_row)
+```
+
+```{r}
+corrplot(cor(college_row[, -1]), method="shade", type = "upper", tl.cex=.6 
+                   , tl.col="black", title="Correlation",number.font = 2, mar=c(0,0,1,0),)
+ggplot(college_row, aes(x = Private, y = Outstate, fill = Private)) + geom_boxplot(width = 0.3)
+ggplot(college_row, aes(x = Private, y = Personal, fill = Private)) + geom_boxplot(width = 0.3)
+
+college_pro <- College %>%
+  mutate(accept_rate = Accept/Apps,
+         isElite = cut(Top10perc,
+                       breaks = c(0, 50, 100),
+                       labels = c("Not Elite", "Elite"),
+                       include.lowest = TRUE)) %>%
+  mutate(isElite = factor(isElite)) %>%
+  select(accept_rate, Outstate, Enroll, Grad.Rate, Private, isElite)
+row.names(college_pro) = row.names(college_row)
+
+glimpse(college_pro)
+#str(college_pro)
+#head(college_pro)
+```
+
+```{r}
+college_pro %>% vis_dat()
+mat = cor(college_pro %>% select(accept_rate, Outstate, Enroll, Grad.Rate))
+corrplot(mat, method="shade", type = "upper", tl.cex=0.6, tl.col="black", title="Correlation",number.font = 2, mar=c(0,0,1,0))
+```
+
+```{r}
+college_pro_nu = college_pro %>% select(accept_rate, Outstate, Enroll, Grad.Rate)
+mean_silhouette = data.frame(matrix(0, nrow = 9, ncol = 5))
+
+for(i in 1 : 5){
+  set.seed(i)
+  for(k in 2 : 10){
+    kmeansfit = kmeans(college_pro_nu, centers = k)
+    silhouette_result = silhouette(kmeansfit $ cluster, college_pro_nu %>% dist)
+    mean_silhouette[k-1, i] = mean(silhouette_result[, 'sil_width'])
+  }
+}
+  ggplot(mean_silhouette, aes(x=2:10, y=mean_silhouette[,1])) + geom_line(color='red', size = 1.5) + geom_line(aes(x=2:10, y=mean_silhouette[,2]), color='green', size = 1.5) + geom_line(aes(x=2:10, y=mean_silhouette[,3]), color='yellow', size = 1.5)+ geom_line(aes(x=2:10, y=mean_silhouette[,4]), color='blue', size = 1.5)+ geom_line(aes(x=2:10, y=mean_silhouette[,5]), color='gray', size = 1.5)
+```
+
+```{r}
+set.seed(1)
+college_pro_pr <- predict(princomp(college_pro_nu, scores=T, cor = TRUE))[,1:2]
+plot(college_pro_pr,main='PCA 2D Plot')
+
+```
+
+
+```{r}
+# Remove college name before clustering
+gower_dist <- daisy(college_pro, metric = "gower", type = list(logratio = 3))
+
+# Check attributes to ensure the correct methods are being used
+# (I = interval, N = nominal)
+# Note that despite logratio being called, 
+# the type remains coded as "I"
+summary(gower_dist)
+```
+
+```{r}
+en = ggplot(data = college_pro, aes(x = Enroll)) + geom_histogram(aes(y=..density..),binwidth=200,color='black',fill='white') + geom_density(alpha=0.2, fill='green')
+
+en_log = ggplot(data = college_pro, aes(x = log(Enroll))) + geom_histogram(aes(y=..density..),binwidth=0.2,color='black',fill='white') + geom_density(alpha=0.2, fill='green')
+
+out = ggplot(data = college_pro, aes(x = Outstate)) + geom_histogram(aes(y=..density..),binwidth=800,color='black',fill='white') + geom_density(alpha=0.2, fill='orange')
+
+out_log = ggplot(data = college_pro, aes(x = log(Outstate))) + geom_histogram(aes(y=..density..),binwidth=0.09,color='black',fill='white') + geom_density(alpha=0.2, fill='orange')
+
+ggdraw() + draw_plot(en, x = 0, y = .55, width = .5, height = .45) + draw_plot(en_log, x = .5, y = .55, width = .5, height = .45) + draw_plot(out, x = 0, y = 0, width = .5, height = 0.45) + draw_plot(out_log, x = .5, y = 0, width = .5, height = 0.45) 
+```
+
+
+```{r}
+# Calculate silhouette width for many k using PAM
+sil_width <- c(NA)
+
+for(i in 2:10){
+  
+  pam_fit <- pam(gower_dist, diss=TRUE, k = i)
+  sil_width[i] <- pam_fit$silinfo$avg.width
+  
+}
+
+# Plot sihouette width (higher is better)
+plot(1:10, sil_width,xlab = "Number of Clusters",ylab = "Silhouette Width", pch = 16)
+lines(1:10, sil_width)
+```
+
+```{r}
+pam_fit <- pam(gower_dist, diss = TRUE, k = 3)
+
+pam_results <- college_pro %>%
+  mutate(cluster = pam_fit$clustering) %>%
+  group_by(cluster) %>%
+  do(the_summary = summary(.))
+
+print(pam_results$the_summary)
+```
+
+```{r}
+knitr::kable(college_pro[pam_fit$medoids, ])
+```
+
+```{r}
+tsne_obj <- Rtsne(gower_dist, is_distance = TRUE)
+
+tsne_data <- tsne_obj$Y %>%
+  data.frame() %>%
+  setNames(c("X", "Y")) %>%
+  mutate(cluster = factor(pam_fit$clustering),
+         name = college_pro$name)
+
+ggplot(aes(x = X, y = Y), data = tsne_data) + geom_point(aes(color = cluster))
+```
+
+```{r}
+college_clean = college_pro
+college_clean $ name = rownames(college_pro)
+
+tsne_data %>%
+  mutate(name = rownames(college_pro)) %>%
+  filter(X > 10 & X < 15,
+         Y > 10 & Y < 20) %>%
+  left_join(college_clean, by = "name") %>%
+  collect %>%
+  .[["name"]]
+```
+
+```{r}
+college_pro_numeric = college_pro
+college_pro_numeric[, 5] = as.numeric(college_pro_numeric[, 5])-1
+college_pro_numeric[, 6] = as.numeric(college_pro_numeric[, 6])-1
+```
+
+```{r}
+gower_dist2 = gower_dist
+ma = as.matrix(gower_dist2)
+college_pro_numeric_umap = umap(ma)
+plot(college_pro_numeric_umap$layout, col=pam_fit$clustering, pch=16,asp = 1, cex = 0.5,
+     xlab = "UMAP_1",ylab = "UMAP_2",
+     main = "UMAP 2D Plot")
+```
+
+```{r}
+gower_dist2 <- daisy(college_pro, metric = "gower")
+
+```
+
+```{r}
+pam_fit2 <- pam(gower_dist2, diss = TRUE, k = 3)
+
+pam_results2 <- college_pro %>%
+  mutate(cluster = pam_fit2$clustering) %>%
+  group_by(cluster) %>%
+  do(the_summary = summary(.))
+
+print(pam_results2$the_summary)
+```
+
+```{r}
+tsne_obj2 <- Rtsne(gower_dist2, is_distance = TRUE)
+
+tsne_data2 <- tsne_obj2$Y %>%
+  data.frame() %>%
+  setNames(c("X", "Y")) %>%
+  mutate(cluster = factor(pam_fit2$clustering),
+         name = college_pro$name)
+
+ggplot(aes(x = X, y = Y), data = tsne_data2) + geom_point(aes(color = cluster))
+```
+```{r}
+kmeans_cluster = kmeans(college_pro_numeric,centers=3)$cluster
+college_pro_numeric_umap2 = umap(college_pro_numeric)
+plot(college_pro_numeric_umap2$layout, col=kmeans_cluster, pch=16,asp = 1, cex = 0.5,
+     xlab = "UMAP_1",ylab = "UMAP_2",
+     main = "UMAP 2D Plot under K-means")
+```
+
+
+
+
+
+
+
+
+
