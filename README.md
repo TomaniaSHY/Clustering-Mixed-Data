@@ -1,4 +1,4 @@
-The Work is for ISBD Applied Statistics 2024Spring Project Final.
+This Work is for ISBD Applied Statistics 2024 Spring Project Final.
 
 The title is Clustering Analysis of a US Colleges Dataset with Mixed Data-types.
 
